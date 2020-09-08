@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: This template creates an EC2 instance which enables SSH connection. 
+
+Resources:
+  GuileCFInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-02354e95b39ca8dec
+      InstanceType: t2.micro
+      KeyName: testkey
+      SecurityGroups:
+        - bruce-cfdemo-sg
+      Tags:
+        - Key: Name
+          Value: bruce-cf-instance
+      
