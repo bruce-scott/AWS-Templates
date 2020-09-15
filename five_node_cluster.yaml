@@ -8,7 +8,6 @@ Description: >
   Docker Machines will run on Amazon Linux 2 with custom security group 
   allowing SSH (22), HTTP (80) and TCP(2377, 8080) connections from anywhere.
   User needs to select appropriate key name when launching the template.
-
 Parameters:
   KeyPairName:
     Description: testkey
@@ -40,7 +39,7 @@ Resources:
   DockerMachine1:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-02354e95b39ca8dec
+      ImageId: ami-038b5c5d2ad6a5090
       InstanceType: t2.micro
       KeyName: !Ref KeyPairName
       SecurityGroupIds:
@@ -52,7 +51,7 @@ Resources:
   DockerMachine2:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-02354e95b39ca8dec
+      ImageId: ami-038b5c5d2ad6a5090
       InstanceType: t2.micro
       KeyName: !Ref KeyPairName
       SecurityGroupIds:
@@ -64,7 +63,7 @@ Resources:
   DockerMachine3:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-02354e95b39ca8dec
+      ImageId: ami-038b5c5d2ad6a5090
       InstanceType: t2.micro
       KeyName: !Ref KeyPairName
       SecurityGroupIds:
@@ -76,7 +75,7 @@ Resources:
   DockerMachine4:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-02354e95b39ca8dec
+      ImageId: ami-038b5c5d2ad6a5090
       InstanceType: t2.micro
       KeyName: !Ref KeyPairName
       SecurityGroupIds:
@@ -88,7 +87,7 @@ Resources:
   DockerMachine5:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-02354e95b39ca8dec
+      ImageId: ami-038b5c5d2ad6a5090
       InstanceType: t2.micro
       KeyName: !Ref KeyPairName
       SecurityGroupIds:
