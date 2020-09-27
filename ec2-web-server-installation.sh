@@ -1,3 +1,6 @@
+
+25 Ağustos 2020
+
 # Hands-on EC2-01 : How to Install Apache Web Server on EC2 Linux 2
 
 ## Outline
