@@ -1,5 +1,5 @@
 # PART 1 - EXTEND EBS VOLUME WITHOUT PARTITIONING
-# launch an instance from aws console
+# launch an instance from aws management console
 # check volumes which volumes attached to instance. 
 # only root volume should be listed
 lsblk
