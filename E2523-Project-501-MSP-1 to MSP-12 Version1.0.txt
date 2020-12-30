@@ -1,0 +1,1169 @@
+# E2523-Bekir 
+# Petclinic Microservices Project
+
+# --------------- MSP Hazirlik -------------
+
+# 1- t2.medium dan bir EC2 olusturuyoruz. Tamamen hic bir islem yapmadan EC2 olustuyoruz, user data ile herhangi birsey yuklemiyoruz! Ihtiyacimiz olan herseyi manual olarak yukleyecegiz. 
+# 2- Security gruptan Inbound olarak TCP 22, 80 ve 8080 portlarina erisim izni veriyoruz,
+#
+# Kurulum tamamlandiktan sonra SSH ile baglaniyoruz.
+
+# --------------- MSP 1 -------------
+
+# Server update
+sudo yum update -y
+sudo yum upgrade -y
+
+sudo hostnamectl set-hostname petclinic-dev-server
+
+# Server IP sini ucretsit bir Dynamic DNS servisi ile yonetme
+# Server her start oldugunda ve belirli aralilarla Public IP adresinin bir dns kaydina esitlenmesi
+# 
+sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+sudo yum install -y noip
+# sudo systemctl stop noip.service
+#
+# Konfigurasyon-1 secenek. Manual konfigurasyon:
+# sudo noip2 -C
+#
+# Konfigurasyon-2 secenek. Otomatik konfigurasyon: Daha once hazirlanmis ve Github public repoya yuklenmis olan konfigurasyon dosyasini kullanma. 
+sudo wget -q https://raw.githubusercontent.com/siberblog/REPOADI/master/no-ip2.conf -O /etc/no-ip2.conf
+sudo chmod 777 /etc/no-ip2.conf
+sudo systemctl enable noip.service
+sudo systemctl start noip.service
+# sudo systemctl status noip.service
+
+# Docker yukleme
+sudo amazon-linux-extras install docker -y
+#
+# ec2-user kullanicisini Docker kullanici grubuna ekleme
+sudo usermod -a -G docker ec2-user
+# Jenkins ile docker kullanabilmek icin docker.service dosyasinda gerekli ayarlama
+# Dosyanin bir yedegini al ve sonra dosyayi guncelle
+sudo cp /lib/systemd/system/docker.service /lib/systemd/system/docker.service.bak
+sudo sed -i 's/^ExecStart=.*/ExecStart=\/usr\/bin\/dockerd -H tcp:\/\/127.0.0.1:2375 -H unix:\/\/\/var\/run\/docker.sock/g' /lib/systemd/system/docker.service
+# Docker kullanabilmek icin docker.service dosyasina erisim yetkisi ver
+sudo chmod 666 /var/run/docker.sock
+# docker.service dosyasinda guncelleme yapildigi icin daemon-reload yapiyoruz
+sudo systemctl daemon-reload
+# Docker servisini baslat
+sudo systemctl start docker
+# EC2 yeniden basladiginda Docker serivisinin otomatik start olabilmesi icin enable ayarini yap
+sudo systemctl enable docker
+# Docker servisin calistigindan emin ol
+# sudo systemctl status docker
+# Docker kullanilabilir oldugundan emin omak icin asagidaki komutu calistir
+# docker ps
+
+# Docker Compose yukleme
+sudo curl -L "https://github.com/docker/compose/releases/download/1.26.2/docker-compose-$(uname -s)-$(uname -m)" \
+          -o /usr/local/bin/docker-compose
+# Indirilen Docker Compose dosyasina  execute yetkisi verme
+sudo chmod +x /usr/local/bin/docker-compose
+# docker-compose --version
+
+# AWS CLI yukleme
+# aws cli version 1 uninstall
+sudo rm -rf /bin/aws
+# aws cli version 2 install
+sudo curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+sudo unzip awscliv2.zip
+sudo ./aws/install
+# kurulum dosyalarini sil
+sudo rm -rf aws
+sudo rm awscliv2.zip
+# EC2 ya IAM Role verilmeyecekse Konfigurasyon yapilmali
+# aws configure
+# aws --version
+
+# install java 11 JDK
+sudo yum install java-11-amazon-corretto -y
+
+# install git
+sudo yum install git -y
+
+
+
+# --------------- MSP 2 -------------
+
+# ---------------- MSP 2 - STEP 1 ----------------
+
+
+# GIT konfigurasyon islemleri 
+
+# Github uzerinde tanimlanmasi istenen repository adini environment olarak tanimlama
+export REPONAME="petclinic-microservices"
+export GITHUBTOKEN="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+git config --global credential.helper store
+git config --global user.email "siberblog@gmail.com"
+git config --global user.name "Bekir Yalcin"
+git config --global user.password "Asdf1234"
+git config --global github.user siberblog
+git config --global github.token $GITHUBTOKEN
+#
+# Github kullanici adi ve parolasini her zaman her yerde kullanabilmek icin environment olarak tanimlama
+export GITHUBUSER=$(git config github.user)
+export GITHUBPASS=$(git config user.password)
+#
+# Kayitli konfigurasyon bilgilerini gormek icin asagidaki komutlar kullanilabilir
+# git config --list
+# cat ~/.gitconfig
+
+# Tanimlanan environment lerin terminallerde ve  EC2 restart sonrasinda da kullanilabilmesi icin 
+# NOT: bu komutlar 1 kez calistirilmali! Eger hata olduysa /etc/profile dosyasi manual duzeltileli!
+sudo echo """export REPONAME=$REPONAME""" >> /etc/profile
+sudo echo """export GITHUBTOKEN=$GITHUBTOKEN""" >> /etc/profile
+sudo echo """export GITHUBUSER=$GITHUBUSER""" >> /etc/profile
+sudo echo """export GITHUBPASS=$GITHUBPASS""" >> /etc/profile
+
+
+# ---------------- MSP 2 - STEP 2 ----------------
+
+
+# Git-hub uzerinde daha onceden olusturulma ayni ada sahip repo varsa adini degistir. 
+datetime=$(date +"%Y-%m-%d-%H-%M")
+oldRepoNewName='{"name":"'$REPONAME-${datetime}'"}'
+#
+# Github api ile github daki repository nin adini degistirme
+curl -X PATCH \
+     -H "Authorization: token ${GITHUBTOKEN}" \
+     -d "$oldRepoNewName" https://api.github.com/repos/$GITHUBUSER/$REPONAME
+
+
+# Git-hub uzerinde yeni repo olusturma
+NewRepoNewName='{"name":"'$REPONAME'", "description":"Pet Clinic Microservices Project 501"}'
+#
+curl  https://api.github.com/user/repos  \
+      -H "Authorization: token ${GITHUBTOKEN}" \
+      -d $NewRepoNewName
+
+
+# ---------------- MSP 2 - STEP 3 ----------------
+
+
+# Github repository de history olusturabilmek icin, eski tarihli kayitlar/commit ler olusturabilmek icin ec2 nun tarihini eski zamana ayarlama,
+sudo date -s '2020-11-28 12:34:56'
+
+# Kullanmak istedigimiz repo ismi daha once bulundugumuz ec2 ya klon edildi ise once onu sil,
+cd $HOME
+rm -Rf $REPONAME template
+# 
+# Template isimli klasor icerisine Clarusway public repository deki proje dosyalarini klonla,
+git clone https://github.com/clarusway/petclinic-microservices.git template
+# .git dosyasini sil
+rm -rf template/.git
+#
+# Az once github da yeni olusturdugumuz repositoryi klonla,
+git clone https://github.com/${GITHUBUSER}/${REPONAME}.git
+#
+# template dizinindeki tum dosyalari kendi repomuza tasi ve template dizinini sil,
+mv -f template/.[!.]* $REPONAME/
+mv -f template/* $REPONAME/                           #*/ template icindeki dsoyalari tasi
+rm -rf template
+
+# Proje klasorune gir, git ile gerekli islemleri yap ve master branch ina push et,
+cd $REPONAME
+git add .
+git commit -m "First commit - Template files added."
+git push origin master
+
+# master branch dan referans alarak yeni branch olustur ve ona gec - dev,
+git branch dev
+git checkout dev
+# Olusturulan branch github bildir/gonder,
+git push --set-upstream origin dev
+
+
+# Github da default branch degistir - dev,
+  curl --verbose \
+    -H "Authorization: token ${GITHUBTOKEN}" \
+    -X PATCH \
+    -d '{"default_branch":"dev"}' \
+       "https://api.github.com/repos/$GITHUBUSER/$REPONAME" 
+
+
+# dev branch dan referans alarak yeni branch olustur ve ona gec - release,
+git checkout -b release
+
+# Olusturulan branch github bildir/gonder,
+git push --set-upstream origin release
+
+
+# --------------- MSP 3 -------------
+
+
+sudo date -s '2020-12-01 08:45:28'
+
+# Proje dizinine gec,
+cd $HOME/${REPONAME}
+
+# Maven scriptine execute yetkisi ver,
+sudo chmod +x mvnw
+
+# Maven calistigindan emin olmak icin sira ile asagidaki komutlari calistir,
+# ./mvnw clean test
+# ./mvnw clean package
+# ./mvnw clean install
+
+
+# --------------- MSP 4 -------------
+
+
+sudo date -s '2020-12-05 08:45:28'
+
+# Proje dizinine gec,
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-4,
+git branch feature/msp-4
+git checkout feature/msp-4
+
+# Maven ile package yapacak bir bash script olustur ve execute yetkisi ver,
+echo ./mvnw clean package > package-with-mvn-wrapper.sh
+chmod +x package-with-mvn-wrapper.sh
+
+
+# Yapilan degisikligi ekle ve push et,
+git add .
+git commit -m 'added maven packaging script'
+git push --set-upstream origin feature/msp-4
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+git merge feature/msp-4
+# ONEMLI NOT-1: Lokalde merge yapilmaz ise ve github ekraninda "Compare & pull request" secenegi ile merge islemi yapilir ise bundan lokalin haberi olmayacaktir, ayni branch ile lokalde tekrar islemler yapilir ve terkar push edilmek istenirse sorunlarla karsilarilacaktir!
+# Lokalde yapilan merge islemini github bildir. 
+git push origin dev
+# ONEMLI NOT-2: Local de yapilan bu merge islemi github a bildirilene kadar github ekraninda "Compare & pull request" secenegi gorunmeye devam edecektir!
+# ONEMLI NOT-3: Hem lokalde merge yapip hem de github uzerinde "Compare & pull request" islemi yapilmamalidir!
+# Bu ONEMLI NOTLAR tum branch lar ile calismalar icin gecerlidir!
+
+
+# --------------- MSP 5 -------------
+
+
+sudo date -s '2020-12-04 18:21:21'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+# Yeni bir klasor olustur - infrastructure
+sudo mkdir infrastructure
+sudo chmod 777 infrastructure
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-5,
+git checkout -b feature/msp-5
+
+
+# Komut satirindan Infrastructure dizini altina Cloudformation template olustur,  
+# NOT: Bu adim sadece bilgi amaclidir. Bu olusturdugumuz dosya ile yeni bir EC2 olusturmaycagiz! Varolan EC2 uzerine gerekli programalri ve servisleri yukleyerek calismaya devam edecegiz,
+echo -n '#! /bin/bash
+yum update -y
+hostnamectl set-hostname petclinic-dev-server
+amazon-linux-extras install docker -y
+systemctl start docker
+systemctl enable docker
+usermod -a -G docker ec2-user
+curl -L "https://github.com/docker/compose/releases/download/1.26.2/docker-compose-$(uname -s)-$(uname -m)" \
+-o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+yum install git -y
+yum install java-11-amazon-corretto -y
+git clone https://github.com/clarusway/petclinic-microservices.git
+cd petclinic-microservices
+git fetch
+git checkout dev' > infrastructure/dev-server-for-petclinic-app-cfn-template.yml
+
+
+git add .
+git commit -m 'added cloudformation template for dev server'
+git push --set-upstream origin feature/msp-5
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-5
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 6 -------------
+
+sudo date -s '2020-12-06 18:21:21'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-6,
+git checkout -b feature/msp-6
+
+
+# Komut satirindan her bir microservisin kendi klasorune Dockerfile olustur,
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=9090
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-admin-server/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=8080
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-api-gateway/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=8888
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-config-server/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=8081
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-customers-service/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=8761
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-discovery-server/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=7979
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-hystrix-dashboard/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=8083
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-vets-service/Dockerfile
+
+echo -n 'FROM openjdk:11-jre
+ARG DOCKERIZE_VERSION=v0.6.1
+ARG EXPOSED_PORT=8082
+ENV SPRING_PROFILES_ACTIVE docker
+ADD https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz dockerize.tar.gz
+RUN tar xzf dockerize.tar.gz
+RUN chmod +x dockerize
+ADD ./target/*.jar /app.jar
+EXPOSE ${EXPOSED_PORT}
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]' > spring-petclinic-visits-service/Dockerfile
+
+
+git add .
+git commit -m 'added Dockerfiles for microservices'
+git push --set-upstream origin feature/msp-6
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-6
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 7 -------------
+
+
+sudo date -s '2020-12-09 11:21:12'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-7,
+git checkout -b feature/msp-7
+
+
+# Komut satirindan build-dev-docker-images.sh bash scriptini olustur,
+echo -n './mvnw clean package
+docker build --force-rm -t "petclinic-admin-server:dev" ./spring-petclinic-admin-server
+docker build --force-rm -t "petclinic-api-gateway:dev" ./spring-petclinic-api-gateway
+docker build --force-rm -t "petclinic-config-server:dev" ./spring-petclinic-config-server
+docker build --force-rm -t "petclinic-customers-service:dev" ./spring-petclinic-customers-service
+docker build --force-rm -t "petclinic-discovery-server:dev" ./spring-petclinic-discovery-server
+docker build --force-rm -t "petclinic-hystrix-dashboard:dev" ./spring-petclinic-hystrix-dashboard
+docker build --force-rm -t "petclinic-vets-service:dev" ./spring-petclinic-vets-service
+docker build --force-rm -t "petclinic-visits-service:dev" ./spring-petclinic-visits-service
+docker build --force-rm -t "petclinic-grafana-server:dev" ./docker/grafana
+docker build --force-rm -t "petclinic-prometheus-server:dev" ./docker/prometheus' > build-dev-docker-images.sh
+
+# Olusturulan scripte calisabilme / execute yetkisi ver,
+sudo chmod +x build-dev-docker-images.sh
+
+# Olusturulan scripti test etmek icin calistir,
+# ./build-dev-docker-images.sh
+
+
+git add .
+git commit -m 'added script for building docker images'
+git push --set-upstream origin feature/msp-7
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-7
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 8 -------------
+
+
+sudo date -s '2020-12-13 09:44:25'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-8,
+git checkout -b feature/msp-8
+
+
+# Komut satirindan Docker-Compose dosayani docker-compose-local.yml olustur,
+echo -n 'version: "2"
+
+services:
+  config-server:
+    image: petclinic-config-server:dev
+    container_name: config-server
+    mem_limit: 512M
+    ports:
+     - 8888:8888
+
+  discovery-server:
+    image: petclinic-discovery-server:dev
+    container_name: discovery-server
+    mem_limit: 512M
+    depends_on:
+    - config-server
+    entrypoint: ["./dockerize","-wait=tcp://config-server:8888","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+     - 8761:8761
+
+  customers-service:
+    image: petclinic-customers-service:dev
+    container_name: customers-service
+    mem_limit: 512M
+    depends_on:
+    - config-server
+    - discovery-server
+    entrypoint: ["./dockerize","-wait=tcp://discovery-server:8761","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+    - 8081:8081
+
+  visits-service:
+    image: petclinic-visits-service:dev
+    container_name: visits-service
+    mem_limit: 512M
+    depends_on:
+     - config-server
+     - discovery-server
+    entrypoint: ["./dockerize","-wait=tcp://discovery-server:8761","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+     - 8082:8082
+
+  vets-service:
+    image: petclinic-vets-service:dev
+    container_name: vets-service
+    mem_limit: 512M
+    depends_on:
+     - config-server
+     - discovery-server
+    entrypoint: ["./dockerize","-wait=tcp://discovery-server:8761","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+     - 8083:8083
+
+  api-gateway:
+    image: petclinic-api-gateway:dev
+    container_name: api-gateway
+    mem_limit: 512M
+    depends_on:
+     - config-server
+     - discovery-server
+    entrypoint: ["./dockerize","-wait=tcp://discovery-server:8761","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+     - 8080:8080
+
+  tracing-server:
+    image: openzipkin/zipkin
+    container_name: tracing-server
+    mem_limit: 512M
+    environment:
+    - JAVA_OPTS=-XX:+UnlockExperimentalVMOptions -Djava.security.egd=file:/dev/./urandom
+    ports:
+     - 9411:9411
+
+  admin-server:
+    image: petclinic-admin-server:dev
+    container_name: admin-server
+    mem_limit: 512M
+    depends_on:
+     - config-server
+     - discovery-server
+    entrypoint: ["./dockerize","-wait=tcp://discovery-server:8761","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+     - 9090:9090
+
+  hystrix-dashboard:
+    image: petclinic-hystrix-dashboard:dev
+    container_name: hystrix-dashboard
+    mem_limit: 512M
+    depends_on:
+     - config-server
+     - discovery-server
+    entrypoint: ["./dockerize","-wait=tcp://discovery-server:8761","-timeout=60s","--","java", "-Djava.security.egd=file:/dev/./urandom","-jar","/app.jar"]
+    ports:
+     - 7979:7979
+
+  ## Grafana / Prometheus
+
+  grafana-server:
+    image: petclinic-grafana-server:dev
+    container_name: grafana-server
+    mem_limit: 256M
+    ports:
+    - 3000:3000
+
+  prometheus-server:
+    image: petclinic-prometheus-server:dev
+    container_name: prometheus-server
+    mem_limit: 256M
+    ports:
+    - 9091:9090' > docker-compose-local.yml
+
+# Olusturulan docker-compose dosyasini test et,
+# docker-compose -f docker-compose-local.yml up
+# docker-compose -f docker-compose-local.yml down
+
+# Olusturulan docker-compose dosyasini calistiracak bir bash script olustur, 	
+echo -n 'docker-compose -f docker-compose-local.yml up' > test-local-deployment.sh
+
+# Olusturulan bash scripte calistirilabilme / execute yetkisi ver, 	
+chmod +x test-local-deployment.sh
+
+
+git add .
+git commit -m 'added docker-compose file and script for local deployment'
+git push --set-upstream origin feature/msp-8
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-8
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 9 -------------
+
+
+sudo date -s '2020-12-15 22:59:32'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-9,
+git checkout -b feature/msp-9
+
+
+# Komut satirindan asagidaki klasor altina unit test ler icin PetTest.java dosyasini olustur
+# /home/ec2-user/${REPONAME}/spring-petclinic-customers-service/src/test/java/org/springframework/samples/petclinic/customers/model/
+
+echo -n 'package org.springframework.samples.petclinic.customers.model;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import java.util.Date;
+
+import org.junit.jupiter.api.Test;
+public class PetTest {
+    @Test
+    public void testGetName(){
+        //Arrange
+        Pet pet = new Pet();
+        //Act
+        pet.setName("Fluffy");
+        //Assert
+        assertEquals("Fluffy", pet.getName());
+    }
+    @Test
+    public void testGetOwner(){
+        //Arrange
+        Pet pet = new Pet();
+        Owner owner = new Owner();
+        owner.setFirstName("Call");
+        //Act
+        pet.setOwner(owner);
+        //Assert
+        assertEquals("Call", pet.getOwner().getFirstName());
+    }
+    @Test
+    public void testBirthDate(){
+        //Arrange
+        Pet pet = new Pet();
+        Date bd = new Date();
+        //Act
+        pet.setBirthDate(bd);
+        //Assert
+        assertEquals(bd,pet.getBirthDate());
+    }
+}' > /home/ec2-user/${REPONAME}/spring-petclinic-customers-service/src/test/java/org/springframework/samples/petclinic/customers/model/PetTest.java
+
+
+# Unit testler icin olusturulan dosyayi commit et, 
+git add .
+git commit -m 'added 3 Unit Test for customer service'
+git push -u origin feature/msp-9
+
+
+sudo date -s '2020-12-16 14:29:25'
+
+# Mavenin yeni JaCoCo pluginini kullanabilmesi icin pom.xml dosyasinda guncelleme yap,
+CONTENT='<plugin>\n
+    <groupId>org.jacoco</groupId>\n
+    <artifactId>jacoco-maven-plugin</artifactId>\n
+    <version>0.8.2</version>\n
+    <executions>\n
+        <execution>\n
+            <goals>\n
+                <goal>prepare-agent</goal>\n
+            </goals>\n
+        </execution>\n
+        <\!-- attached to Maven test phase -->\n
+        <execution>\n
+            <id>report</id>\n
+            <phase>test</phase>\n
+            <goals>\n
+                <goal>report</goal>\n
+            </goals>\n
+        </execution>\n
+    </executions>\n
+</plugin>\n
+</plugins>
+'
+
+C=$(echo $CONTENT | sed 's/\//\\\//g')
+
+sed -i "0,/<\/plugins>/ {s/<\/plugins>/${C}/}" pom.xml
+
+
+#  Eklenen unit testlerin calistigindan emin olmak icin test et,
+#  Sadece customers-service icin unit testleri yapacagiz. 
+#  Eger proje dizininde iken maven scriptini calistirirsak tum microservisler icin test calisacak ve cok beklemek gerekecek.
+#  Sadece test etmek istedigimiz microservices klasorune gidiyoruz,
+# cd /home/ec2-user/${REPONAME}/spring-petclinic-customers-service
+#
+#  Maven scriptini bir alt klasorden cagirarak calistir. Maven script microservices klasorunde calistirildigi icin bu sadece bu klasorde bulunan pom.xml dosyasini kullanacak!
+# ../mvnw clean test
+# 
+#  Unit test sonuclarini gorsel olarak gorebiliriz. Bunun icin JaCoCo raporunun olustugu dizene gecelim,
+# cd /home/ec2-user/${REPONAME}/spring-petclinic-customers-service/target/site/jacoco
+#
+#  Bu dizinde JaCoCo tarafidan olusturulan web sayfasini goruntulemek icin python 2.7 calisabilen basit web server kurulumu yapabiliriz.
+# python -m SimpleHTTPServer
+# Sonuclari gorebilmek VSCode kullaniliyor ise su link http://localhost:8000/ kullanilabilir. VSCode EC2 da calisan bu web serveri lokal den gorebilmemizi saglaycaktir.
+
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+git add .
+git commit -m "update POM file with JaCoCo plugin"
+git push -u origin feature/msp-9
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-9
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 10 -------------
+
+
+sudo date -s '2020-12-16 13:41:12'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-10,
+git checkout -b feature/msp-10
+
+
+# Selenium testleri icin klasor olustur
+mkdir selenium-jobs
+
+# Komut satirindan selenium-jobs klasorunu icine selenium-jobs/test_owners_all_headless.py dosyasini olustur,
+echo -n 'from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from time import sleep
+import os
+
+# Set chrome options for working with headless mode (no screen)
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument("headless")
+chrome_options.add_argument("no-sandbox")
+chrome_options.add_argument("disable-dev-shm-usage")
+
+# Update webdriver instance of chrome-driver with adding chrome options
+driver = webdriver.Chrome(options=chrome_options)
+
+# Connect to the application
+APP_IP = os.environ['"'"'MASTER_PUBLIC_IP'"'"']
+url = "http://"+APP_IP.strip()+":8080/"
+print(url)
+driver.get(url)
+owners_link = driver.find_element_by_link_text("OWNERS")
+owners_link.click()
+sleep(2)
+all_link = driver.find_element_by_link_text("ALL")
+all_link.click()
+sleep(2)
+
+# Verify that table loaded
+sleep(1)
+verify_table = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+
+print("Table loaded")
+
+driver.quit()' > selenium-jobs/test_owners_all_headless.py
+
+
+# Komut satirindan selenium-jobs klasorunu icine test_owners_register_headless.py dosyasini olustur,
+echo -n 'from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from time import sleep
+import random
+import os
+# Set chrome options for working with headless mode (no screen)
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument("headless")
+chrome_options.add_argument("no-sandbox")
+chrome_options.add_argument("disable-dev-shm-usage")
+
+# Update webdriver instance of chrome-driver with adding chrome options
+driver = webdriver.Chrome(options=chrome_options)
+
+# Connect to the application
+APP_IP = os.environ['"'"'MASTER_PUBLIC_IP'"'"']
+url = "http://"+APP_IP.strip()+":8080/"
+print(url)
+driver.get(url)
+owners_link = driver.find_element_by_link_text("OWNERS")
+owners_link.click()
+sleep(2)
+all_link = driver.find_element_by_link_text("REGISTER")
+all_link.click()
+sleep(2)
+# Register new Owner to Petclinic App
+fn_field = driver.find_element_by_name('"'"'firstName'"'"')
+fn = '"'"'Callahan'"'"' + str(random.randint(0, 100))
+fn_field.send_keys(fn)
+sleep(1)
+fn_field = driver.find_element_by_name('"'"'lastName'"'"')
+fn_field.send_keys('"'"'Clarusway'"'"')
+sleep(1)
+fn_field = driver.find_element_by_name('"'"'address'"'"')
+fn_field.send_keys('"'"'Ridge Corp. Street'"'"')
+sleep(1)
+fn_field = driver.find_element_by_name('"'"'city'"'"')
+fn_field.send_keys('"'"'McLean'"'"')
+sleep(1)
+fn_field = driver.find_element_by_name('"'"'telephone'"'"')
+fn_field.send_keys('"'"'+1230576803'"'"')
+sleep(1)
+fn_field.send_keys(Keys.ENTER)
+sleep(1)
+# Wait 2 second to get updated Owner List
+sleep(2)
+# Verify that new user is added to Owner List
+if fn in driver.page_source:
+    print(fn, '"'"'is added and found in the Owners Table'"'"')
+    print("Test Passed")
+else:
+    print(fn, '"'"'is not found in the Owners Table'"'"')
+    print("Test Failed")
+driver.quit()' > selenium-jobs/test_owners_register_headless.py
+
+
+# Komut satirindan selenium-jobs klasorunu icine test_veterinarians_headless.py dosyasini olustur,
+echo -n 'from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from time import sleep
+import os
+
+# Set chrome options for working with headless mode (no screen)
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument("headless")
+chrome_options.add_argument("no-sandbox")
+chrome_options.add_argument("disable-dev-shm-usage")
+
+# Update webdriver instance of chrome-driver with adding chrome options
+driver = webdriver.Chrome(options=chrome_options)
+
+# Connect to the application
+APP_IP = os.environ['"'"'MASTER_PUBLIC_IP'"'"']
+url = "http://"+APP_IP.strip()+":8080/"
+print(url)
+driver.get(url)
+vet_link = driver.find_element_by_link_text("VETERINARIANS")
+vet_link.click()
+
+# Verify that table loaded
+sleep(1)
+verify_table = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+
+print("Table loaded")
+
+driver.quit()' > selenium-jobs/test_veterinarians_headless.py
+
+
+git add .
+git commit -m 'added selenium jobs written in python'
+git push --set-upstream origin feature/msp-10
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-10
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 11 -------------
+
+
+sudo date -s '2020-12-18 18:24:51'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni branch olustururken dosyalari referans almak icin dev branch ina gec,
+git checkout dev
+# Yeni branch olustur ve ona gec - feature/msp-11,
+git checkout -b feature/msp-11
+
+
+# Komut satirindan infrastructure klasorunu icine Cloudformation jenkins-server-cfn-template.yml dosyasini olustur,
+# NOT: Bu adim sadece bilgi amaclidir. Bu olusturdugumuz dosya ile yeni bir EC2 olusturmaycagiz! Varolan EC2 uzerine gerekli programalri ve servisleri yukleyerek calismaya devam edecegiz,
+echo -n '#! /bin/bash
+# update os
+yum update -y
+# set server hostname as jenkins-server
+hostnamectl set-hostname jenkins-server
+# install git
+yum install git -y
+# install java 11
+yum install java-11-amazon-corretto -y
+# install jenkins
+wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat/jenkins.repo
+rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key
+yum install jenkins -y
+systemctl start jenkins
+systemctl enable jenkins
+# install docker
+amazon-linux-extras install docker -y
+systemctl start docker
+systemctl enable docker
+usermod -a -G docker ec2-user
+usermod -a -G docker jenkins
+# configure docker as cloud agent for jenkins
+cp /lib/systemd/system/docker.service /lib/systemd/system/docker.service.bak
+sed -i '"'"'s/^ExecStart=.*/ExecStart=\/usr\/bin\/dockerd -H tcp:\/\/127.0.0.1:2375 -H unix:\/\/\/var\/run\/docker.sock/g'"'"' /lib/systemd/system/docker.service
+sudo chmod 666 /var/run/docker.sock
+systemctl daemon-reload
+systemctl restart docker
+systemctl restart jenkins
+# install docker compose
+curl -L "https://github.com/docker/compose/releases/download/1.26.2/docker-compose-$(uname -s)-$(uname -m)" \
+-o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+# uninstall aws cli version 1
+rm -rf /bin/aws
+# install aws cli version 2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+./aws/install
+# install python 3
+yum install python3 -y
+# install ansible
+pip3 install ansible
+# install boto3
+pip3 install boto3' > infrastructure\jenkins-server-cfn-template.yml
+
+
+git add .
+git commit -m 'added jenkins server cfn template'
+git push --set-upstream origin feature/msp-11
+
+
+# dev branch ina gec ve lokal de yeni branch tan gelen dosyalari merge et,
+# Once dev branch ina gec ve sonra birlestirme islemini yap,
+git checkout dev
+# Lokalde yeni branch ile dev branch larini birlestir,
+git merge feature/msp-11
+# Yapilan merge islemini github bildir,
+git push origin dev
+
+
+# --------------- MSP 12 -------------
+
+
+sudo date -s '2020-12-19 09:33:02'
+
+# Proje dizinine gec
+cd $HOME/${REPONAME}
+
+# Yeni bir EC2 ya kurumuyoruz. Varolan EC2 uzerine gerekli uygulamari yukluyoruz,
+
+# install python 3,
+sudo yum install python3 -y
+
+# install ansible,
+sudo pip3 install ansible
+
+# install boto3,
+sudo pip3 install boto3
+
+
+
+# Jenkins servisini yukleme ve otomatik olarak konfigure etme,
+
+# Jenkins yukleme,
+sudo wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat/jenkins.repo
+# sudo yum install deltarpm -y
+# sudo yum clean all
+sudo rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key
+sudo yum install jenkins -y
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+sudo systemctl daemon-reload
+
+
+
+# Jenkins kullanicini Docker kullanici grubuna ekleme,
+# usermod -a -G docker jenkins
+# Jenkins Servisini baslat,
+sudo systemctl start jenkins
+# Restart sonrasi servisin otomatik baslamasi icin durumunu enable yap,
+sudo systemctl enable jenkins
+
+# Jenkins API ile kullanici ekleme ve plugins leri yukleme,
+# Jenkins api indir, once jenkins servisinin ayaga kalktigindan emin olmak icin 3 saniye bekle,
+sleep 3
+sudo curl -O http://127.0.0.1:8080/jnlpJars/jenkins-cli.jar
+# curl -O http://127.0.0.1:8080/jnlpJars/hudson-cli.jar
+#
+# Jenkins kullanici ekleme,
+# Servisin tam olarak baslayabilmesi icin 3 saniye bekle ve sonra yeni kullanici ekle,
+sleep 3
+# Kullanici eklemek icin ve plugins leri yukleyebilmek icin default admin parolasini al,
+pass=`sudo cat /var/lib/jenkins/secrets/initialAdminPassword`
+# yeni kullanici ekle,
+#
+sudo echo 'jenkins.model.Jenkins.instance.securityRealm.createAccount("user", "Aa12345")' | java -jar jenkins-cli.jar -auth admin:$pass -s http://localhost:8080/ groovy =
+# Jenkins servisinin tam olarak baslamasindan emin olmak icin 3 saniye bekle,
+sleep 3
+
+# Projeye ozel ihtiyacimi olan 4 adet plugins - https://plugins.jenkins.io/
+# jenkins-plugin-cli --plugins docker-plugin:1.2.1
+# jenkins-plugin-cli --plugins docker-workflow:1.25
+# jenkins-plugin-cli --plugins jacoco:3.1.0
+# jenkins-plugin-cli --plugins github-pullrequest:0.2.8
+#
+# Bu 4 adet plugins yuklemek icin,
+# sudo java -jar jenkins-cli.jar -auth admin:$pass -s http://localhost:8080/ install-plugin docker-plugin:1.2.1 docker-workflow:1.25 jacoco:3.1.0 github-pullrequest:0.2.8
+
+# Onerilen plugins leri yuklerken projemizde ihtiyacimiz olan 4 adet pluginsi diger plugins lerle birlikte yukluyoruz,
+#
+sudo java -jar jenkins-cli.jar -auth admin:$pass -s http://localhost:8080/ install-plugin \
+trilead-api:1.0.13 \
+jaxb:2.3.0.1 \
+jdk-tool:1.4 \
+structs:1.2 \
+build-timeout:1.2 \
+workflow-step-api:2.23 \
+credentials:2.3.14 \
+plain-credentials:1.7 \
+timestamper:1.11.8 \
+ssh-credentials:1.18.1 \
+credentials-binding:1.24 \
+checks-api:1.2.0 \
+authentication-tokens:1.4 \
+resource-disposer:0.14 \
+docker-commons:1.17 \
+script-security:1.75 \
+ws-cleanup:0.38 \
+command-launcher:1.5 \
+apache-httpcomponents-client-4-api:4.5.10-2.0 \
+token-macro:2.13 \
+ssh-slaves:1.31.4 \
+durable-task:1.35 \
+bouncycastle-api:2.18 \
+ant:1.11 \
+snakeyaml-api:1.27.0 \
+matrix-auth:2.6.4 \
+jackson2-api:2.12.0 \
+docker-java-api:3.1.5.2 \
+gradle:1.36 \
+docker-plugin:1.2.1 \
+pipeline-milestone-step:1.3.1 \
+pipeline-model-api:1.7.2 \
+ace-editor:1.1 \
+workflow-scm-step:2.11 \
+pam-auth:1.6 \
+scm-api:2.6.4 \
+workflow-api:2.4 \
+workflow-support:3.7 \
+workflow-cps:2.87 \
+pipeline-input-step:2.12 \
+pipeline-stage-step:2.5 \
+workflow-job:2.4 \
+junit:1.48 \
+pipeline-model-extensions:1.7.2 \
+matrix-project:1.18 \
+workflow-durable-task-step:2.37 \
+pipeline-graph-analysis:1.1 \
+cloudbees-folder:6.15 \
+display-url-api:2.3.4 \
+email-ext:2.8 \
+mailer:1.32.1 \
+workflow-basic-steps:2.23 \
+pipeline-rest-api:2.19 \
+docker-workflow:1.25 \
+jacoco:3.1.0 \
+okhttp-api:3.14.9 \
+github-api:1.117 \
+jsch:0.1.55.2 \
+git-client:3.6.0 \
+git:4.5.0 \
+github:1.32.0 \
+plugin-util-api:1.6.1 \
+handlebars:1.1.1 \
+font-awesome-api:5.15.1-1 \
+popper-api:1.16.0-7 \
+jquery3-api:3.5.1-2 \
+bootstrap4-api:4.5.3-1 \
+git-server:1.9 \
+echarts-api:4.9.0-2 \
+momentjs:1.1.1 \
+workflow-multibranch:2.22 \
+jquery-detached:1.2.1 \
+icon-shim:2.0.3 \
+pipeline-stage-view:2.19 \
+github-pullrequest:0.2.8 \
+antisamy-markup-formatter:2.1 \
+pipeline-build-step:2.13 \
+workflow-cps-global-lib:2.17 \
+pipeline-stage-tags-metadata:1.7.2 \
+pipeline-model-definition:1.7.2 \
+lockable-resources:2.1 \
+workflow-aggregator:2.6 \
+github-branch-source:2.9.3 \
+branch-api:2.6.3 \
+pipeline-github-lib:1 
+
+
+
+# Jenkins Docker Plugin ini konfigure et - Docker erisim bilgilerini tanimlama,
+# Configure Docker as `cloud agent` by navigating to `Manage Jenkins` >> `Manage Nodes and Clouds` >> `Configure Clouds` and using `tcp://localhost:2375` as Docker Host URI.
+# 
+# Once konfigurasyon dosyasinin yedegini al,
+sudo chmod 777 /var/lib/jenkins/config.xml
+sudo cp /var/lib/jenkins/config.xml /var/lib/jenkins/config.bak
+#
+# Eklenecek plugin ayarlarini bir environment aktar,
+CONTENT='<clouds>\n
+    <com.nirima.jenkins.plugins.docker.DockerCloud plugin="docker-plugin@1.2.1">\n
+      <name>docker</name>\n
+      <dockerApi>\n
+        <dockerHost plugin="docker-commons@1.17">\n
+          <uri>tcp://localhost:2375</uri>\n
+        </dockerHost>\n
+        <connectTimeout>60</connectTimeout>\n
+        <readTimeout>60</readTimeout>\n
+      </dockerApi>\n
+      <containerCap>100</containerCap>\n
+      <exposeDockerHost>false</exposeDockerHost>\n
+      <disabled>\n
+        <disabledByChoice>true</disabledByChoice>\n
+      </disabled>\n
+    </com.nirima.jenkins.plugins.docker.DockerCloud>\n
+  </clouds>'
+#
+# CONTENT environmenti sed komutu ile kullanilabilir sekilde duzenle,
+C=$(echo $CONTENT | sed 's/\//\\\//g')
+#
+# config dosyasina sed komutu ile gerekli plugini ekle,
+sudo sed -i "0,/<clouds\/>/s//${C}/" /var/lib/jenkins/config.xml
+#
+# eklemenin duzgun yapilip yapilmadigini kontrol et
+# sudo cat /var/lib/jenkins/config.xml
+
+# Yapilan ayarlarin etkin olabilmesi icin Jenkins servisini yeniden baslat,
+sudo systemctl restart jenkins
+
+# Jenkins web sayfasina erisim icin Security gruptan Inbound port olarak 8080 erisim izni verilmis olmalidir.
